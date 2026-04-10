@@ -139,6 +139,9 @@ def refine_mask_small_components(
     min_neighbor_pixels=8,
     iterations=2,
     connectivity=2,
+    target_classes=None,
+    confidence_cap=80,
+    return_details=False,
 ):
     refined = np.asarray(mask).copy()
     if confidence is None:
@@ -146,8 +149,13 @@ def refine_mask_small_components(
     else:
         confidence = np.asarray(confidence, dtype=np.float32)
 
+    refined_confidence = confidence.copy()
+    changed_mask = np.zeros(refined.shape, dtype=bool)
     structure = _connected_structure(connectivity=connectivity)
-    classes = [int(v) for v in np.unique(refined)]
+    if target_classes is None:
+        classes = [int(v) for v in np.unique(refined)]
+    else:
+        classes = [int(v) for v in target_classes]
 
     for _ in range(iterations):
         changed = False
@@ -197,12 +205,20 @@ def refine_mask_small_components(
                 if best_score < min_neighbor_pixels:
                     continue
 
+                new_conf = float(
+                    np.median(neighbor_conf[neighbor_labels == new_cls])
+                )
+                new_conf = max(component_conf, min(new_conf, float(confidence_cap)))
                 refined[component] = new_cls
+                refined_confidence[component] = new_conf
+                changed_mask[component] = True
                 changed = True
 
         if not changed:
             break
 
+    if return_details:
+        return refined, refined_confidence, changed_mask.astype(np.uint8)
     return refined
 
 
@@ -213,6 +229,9 @@ def refine_mask_from_path(
     min_neighbor_pixels=8,
     iterations=2,
     connectivity=2,
+    target_classes=None,
+    confidence_cap=80,
+    return_details=False,
 ):
     with rasterio.open(mask_path) as src:
         mask = src.read(1)
@@ -226,6 +245,9 @@ def refine_mask_from_path(
         min_neighbor_pixels=min_neighbor_pixels,
         iterations=iterations,
         connectivity=connectivity,
+        target_classes=target_classes,
+        confidence_cap=confidence_cap,
+        return_details=return_details,
     )
 
 
