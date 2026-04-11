@@ -93,31 +93,6 @@ def build_metadata(data_dir):
     return meta
 
 
-def compute_band_stats(img_paths):
-    band_sum = None
-    band_sumsq = None
-    total_pixels = 0
-
-    for img_path in tqdm(list(img_paths), desc='Computing band stats'):
-        with rasterio.open(img_path) as src:
-            img = src.read()[:12].astype(np.float32)
-
-        img = np.clip(img, 0, 10000) / 10000.0
-        flat = img.reshape(img.shape[0], -1)
-
-        if band_sum is None:
-            band_sum = np.zeros(flat.shape[0], dtype=np.float64)
-            band_sumsq = np.zeros(flat.shape[0], dtype=np.float64)
-
-        band_sum += flat.sum(axis=1)
-        band_sumsq += np.square(flat).sum(axis=1)
-        total_pixels += flat.shape[1]
-
-    means = band_sum / total_pixels
-    stds = np.sqrt(np.maximum(band_sumsq / total_pixels - means ** 2, 1e-8))
-    return means.astype(np.float32), stds.astype(np.float32)
-
-
 def _connected_structure(connectivity=2):
     if connectivity == 1:
         return np.array(
@@ -129,6 +104,7 @@ def _connected_structure(connectivity=2):
             dtype=np.uint8,
         )
     return np.ones((3, 3), dtype=np.uint8)
+
 
 def build_pixel_quality_mask(img):
     bands = img[:12].astype(np.float32)
@@ -431,8 +407,8 @@ def evaluate_split(name, model, X, y):
     im = ax.imshow(cm, cmap='Blues')
     ax.set_xticks(range(4), [config.CLASS_NAMES[c] for c in [1, 2, 3, 4]], rotation=45, ha='right')
     ax.set_yticks(range(4), [config.CLASS_NAMES[c] for c in [1, 2, 3, 4]])
-    ax.set_xlabel('Predicted')
-    ax.set_ylabel('True')
+    ax.set_xlabel('True')
+    ax.set_ylabel('Predicted')
     ax.set_title(f'{name} Confusion Matrix')
     for i in range(4):
         for j in range(4):

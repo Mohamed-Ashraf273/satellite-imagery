@@ -29,7 +29,7 @@ class Config:
         1: 400_000,   # Greenery
         2: 400_000,   # Sand
         3: None,      # Water -> keep all
-        4: None,      # Cement -> keep all
+        4: 550_000,      # Cement -> keep all
     }
 
     TRAIN_CAPS_DEEP = {
@@ -40,8 +40,8 @@ class Config:
     }
 
     VAL_TEST_CAPS = {
-        1: None,   # Greenery
-        2: None,   # Sand
+        1: 100_000,   # Greenery
+        2: 100_000,   # Sand
         3: None,      # Water -> keep all
         4: None,      # Cement -> keep all
     }
