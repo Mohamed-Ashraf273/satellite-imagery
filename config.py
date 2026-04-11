@@ -14,6 +14,11 @@ class Config:
     RANDOM_STATE = 42
     MIN_CONFIDENCE = 20
     CONFIDENCE_FLOOR = 0.25
+    DARK_PIXEL_MEAN_THRESHOLD = 0.03
+    DARK_PIXEL_MAX_THRESHOLD = 0.08
+    BRIGHT_PIXEL_MEAN_THRESHOLD = 0.85
+    SATURATED_BAND_THRESHOLD = 0.98
+    MAX_SATURATED_BANDS = 6
     WATER_WEIGHT_MULTIPLIER = 3.0
     CEMENT_WEIGHT_MULTIPLIER = 2.0
 
@@ -28,8 +33,8 @@ class Config:
     }
 
     VAL_TEST_CAPS = {
-        1: 100_000,   # Greenery
-        2: 100_000,   # Sand
+        1: 200_000,   # Greenery
+        2: 200_000,   # Sand
         3: None,      # Water -> keep all
         4: None,      # Cement -> keep all
     }

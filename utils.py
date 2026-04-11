@@ -130,6 +130,22 @@ def _connected_structure(connectivity=2):
         )
     return np.ones((3, 3), dtype=np.uint8)
 
+def build_pixel_quality_mask(img):
+    bands = img[:12].astype(np.float32)
+    band_mean = np.mean(bands, axis=0)
+    band_max = np.max(bands, axis=0)
+    saturated_band_count = np.sum(bands >= config.SATURATED_BAND_THRESHOLD, axis=0)
+
+    dark_pixels = (
+        (band_mean <= config.DARK_PIXEL_MEAN_THRESHOLD)
+        & (band_max <= config.DARK_PIXEL_MAX_THRESHOLD)
+    )
+    bright_pixels = (
+        (band_mean >= config.BRIGHT_PIXEL_MEAN_THRESHOLD)
+        | (saturated_band_count >= config.MAX_SATURATED_BANDS)
+    )
+    return ~(dark_pixels | bright_pixels)
+
 
 def refine_mask_small_components(
     mask,
@@ -332,7 +348,7 @@ def count_by_class(y):
     return {config.CLASS_NAMES[int(v)]: int(c) for v, c in zip(values, counts)}
 
 
-def sample_training_pixels(X, y, pixel_weight, caps=config.TRAIN_CAPS, random_state=config.RANDOM_STATE):
+def sample_pixels(X, y, pixel_weight, caps, random_state=config.RANDOM_STATE):
     rng = np.random.RandomState(random_state)
     chosen = []
 
