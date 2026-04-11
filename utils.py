@@ -267,6 +267,36 @@ def refine_mask_from_path(
     )
 
 
+def preprocess_img(img_path, mask_path):
+    with rasterio.open(img_path) as src:
+        img = src.read().astype(np.float32)
+    with rasterio.open(mask_path) as src:
+        mask = src.read(1)
+        if src.count >= 2:
+            confidence = src.read(2).astype(np.float32)
+        else:
+            confidence = np.full(mask.shape, 100.0, dtype=np.float32)
+    
+    refined_mask, refined_confidence, _ = refine_mask_small_components(
+        mask,
+        confidence=confidence,
+        return_details=True,
+        **config.REFINE_KWARGS,
+    )
+    img = np.clip(img, 0, 10000) / 10000.0
+    pixel_valid = build_pixel_quality_mask(img)
+
+    refined_mask = refined_mask.copy()
+    refined_mask[~pixel_valid] = 0
+
+    confidence = np.where(
+        pixel_valid,
+        np.clip(refined_confidence / 100.0, config.CONFIDENCE_FLOOR, 1.0),
+        0.0,
+    ).astype(np.float32)
+    return img, refined_mask, confidence, pixel_valid
+
+
 def build_strata(df):
     strata = np.where(
         (df['has_water'] == 1) & (df['has_cement'] == 1),
@@ -290,7 +320,7 @@ def split_metadata(meta, random_state=config.RANDOM_STATE):
 
     train_df, temp_df = train_test_split(
         meta,
-        test_size=0.30,
+        test_size=0.10,
         random_state=random_state,
         stratify=meta['stratum'],
     )
@@ -348,7 +378,7 @@ def count_by_class(y):
     return {config.CLASS_NAMES[int(v)]: int(c) for v, c in zip(values, counts)}
 
 
-def sample_pixels(X, y, pixel_weight, caps, random_state=config.RANDOM_STATE):
+def sample_pixels(X, y, caps, pixel_weight=None, random_state=config.RANDOM_STATE):
     rng = np.random.RandomState(random_state)
     chosen = []
 
@@ -368,7 +398,13 @@ def sample_pixels(X, y, pixel_weight, caps, random_state=config.RANDOM_STATE):
 
     chosen = np.concatenate(chosen)
     rng.shuffle(chosen)
-    return X[chosen], y[chosen], pixel_weight[chosen]
+    
+    if pixel_weight is not None:
+        pixel_weight_chosen = pixel_weight[chosen]
+    else:
+        pixel_weight_chosen = None
+        
+    return X[chosen], y[chosen], pixel_weight_chosen
 
 
 def encode_labels(y):

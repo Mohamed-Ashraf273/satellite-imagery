@@ -25,16 +25,23 @@ class Config:
     BAND_MEANS: np.ndarray | None = field(default=None, init=False)
     BAND_STDS: np.ndarray | None = field(default=None, init=False)
 
-    TRAIN_CAPS = {
+    TRAIN_CAPS_CLASSIC = {
         1: 400_000,   # Greenery
         2: 400_000,   # Sand
         3: None,      # Water -> keep all
         4: None,      # Cement -> keep all
     }
 
+    TRAIN_CAPS_DEEP = {
+        1: 800_000,   # Greenery
+        2: 800_000,   # Sand
+        3: None,      # Water -> keep all
+        4: None,      # Cement -> keep all
+    }
+
     VAL_TEST_CAPS = {
-        1: 200_000,   # Greenery
-        2: 200_000,   # Sand
+        1: None,   # Greenery
+        2: None,   # Sand
         3: None,      # Water -> keep all
         4: None,      # Cement -> keep all
     }
@@ -65,17 +72,9 @@ class Config:
     NUM_EPOCHS = 25
     LR = 3e-4
     NUM_WORKERS = 2
-    CEMENT_IMAGE_BOOST = 4.0
-    WATER_IMAGE_BOOST = 3.0
-    CEMENT_PIXEL_BOOST = 2.0
-    WATER_PIXEL_BOOST = 3.0
-    CEMENT_CLASS_BOOST = 2.0
-    WATER_CLASS_BOOST = 1.5
-    DICE_WEIGHT = 0.3
 
     NUM_CLASSES = 5
     IGNORE_INDEX = 0
-    IN_CHANNELS = 17
 
     def set_band_stats_once(self, means, stds):
         if self.BAND_MEANS is not None or self.BAND_STDS is not None:
