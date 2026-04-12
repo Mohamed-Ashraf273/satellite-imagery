@@ -274,7 +274,7 @@ def preprocess_img(img_path, mask_path):
 
 
 def build_strata(df):
-    strata = np.where(
+    coarse_strata = np.where(
         (df['has_water'] == 1) & (df['has_cement'] == 1),
         'water_and_cement',
         np.where(
@@ -284,7 +284,18 @@ def build_strata(df):
         ),
     )
 
-    strata = pd.Series(strata, index=df.index)
+    coarse_strata = pd.Series(coarse_strata, index=df.index)
+
+    bins = [-1, 0, 100, 1_000, 10_000, np.inf]
+    labels = ['0', '1_100', '101_1k', '1k_10k', 'gt_10k']
+
+    water_bin = pd.cut(df['count_3'], bins=bins, labels=labels).astype(str)
+    cement_bin = pd.cut(df['count_4'], bins=bins, labels=labels).astype(str)
+    fine_strata = coarse_strata + '__w_' + water_bin + '__c_' + cement_bin
+
+    counts = fine_strata.value_counts()
+    strata = fine_strata.where(fine_strata.map(counts) >= 2, coarse_strata)
+
     counts = strata.value_counts()
     strata = strata.where(strata.map(counts) >= 2, 'base')
     return strata
@@ -296,7 +307,7 @@ def split_metadata(meta, random_state=config.RANDOM_STATE):
 
     train_df, temp_df = train_test_split(
         meta,
-        test_size=0.10,
+        test_size=0.20,
         random_state=random_state,
         stratify=meta['stratum'],
     )
@@ -418,3 +429,33 @@ def evaluate_split(name, model, X, y):
     plt.show()
 
     return cm, macro_iou, per_class_iou
+
+
+def get_feature_corr_ranking(X, y, feature_names=None):
+    X = X.astype(np.float32)
+    y = y.astype(np.int32)
+    classes = np.unique(y)
+    X_centered = X - X.mean(axis=0)
+    corrs_per_class = []
+
+    for c in classes:
+        y_binary = (y == c).astype(np.float32)
+        y_centered = y_binary - y_binary.mean()
+
+        numerator = (X_centered * y_centered[:, None]).sum(axis=0)
+        denominator = np.sqrt(
+            (X_centered**2).sum(axis=0) * (y_centered**2).sum()
+        )
+
+        corr = numerator / (denominator + 1e-8)
+        corrs_per_class.append(corr)
+
+    corrs_per_class = np.array(corrs_per_class)
+    max_corr = np.max(np.abs(corrs_per_class), axis=0)
+    sorted_idx = np.argsort(-max_corr)
+
+    if feature_names is not None:
+        sorted_features = [(feature_names[i], max_corr[i]) for i in sorted_idx]
+        return sorted_features
+    else:
+        return sorted_idx, max_corr[sorted_idx]

@@ -11,6 +11,12 @@ from pathlib import Path
 class Config:
     ROOT = Path('.')
     DATA_DIR = ROOT / 'data'
+    BATCH_SIZE = 8
+    NUM_EPOCHS = 25
+    LR = 3e-4
+    NUM_WORKERS = 2
+    NUM_CLASSES = 5
+    IGNORE_INDEX = 0
     RANDOM_STATE = 42
     MIN_CONFIDENCE = 20
     CONFIDENCE_FLOOR = 0.25
@@ -19,8 +25,7 @@ class Config:
     BRIGHT_PIXEL_MEAN_THRESHOLD = 0.85
     SATURATED_BAND_THRESHOLD = 0.98
     MAX_SATURATED_BANDS = 6
-    WATER_WEIGHT_MULTIPLIER = 3.0
-    CEMENT_WEIGHT_MULTIPLIER = 2.0
+    DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
     BAND_MEANS: np.ndarray | None = field(default=None, init=False)
     BAND_STDS: np.ndarray | None = field(default=None, init=False)
@@ -29,21 +34,14 @@ class Config:
         1: 400_000,   # Greenery
         2: 400_000,   # Sand
         3: None,      # Water -> keep all
-        4: 550_000,      # Cement -> keep all
+        4: 500_000,      # Cement -> keep all
     }
 
     TRAIN_CAPS_DEEP = {
         1: 800_000,   # Greenery
         2: 800_000,   # Sand
-        3: 800_000,   # Water -> keep all
-        4: 800_000,   # Cement -> keep all
-    }
-
-    VAL_TEST_CAPS = {
-        1: 100_000,   # Greenery
-        2: 100_000,   # Sand
-        3: None,      # Water -> keep all
-        4: None,      # Cement -> keep all
+        3: None,   # Water -> keep all
+        4: None,   # Cement -> keep all
     }
 
     CLASS_NAMES = {
@@ -66,15 +64,6 @@ class Config:
 
     LABEL_TO_XGB = {1: 0, 2: 1, 3: 2, 4: 3}
     XGB_TO_LABEL = {v: k for k, v in LABEL_TO_XGB.items()}
-
-    DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
-    BATCH_SIZE = 8
-    NUM_EPOCHS = 25
-    LR = 3e-4
-    NUM_WORKERS = 2
-
-    NUM_CLASSES = 5
-    IGNORE_INDEX = 0
 
     def set_band_stats_once(self, means, stds):
         if self.BAND_MEANS is not None or self.BAND_STDS is not None:
