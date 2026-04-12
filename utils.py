@@ -50,14 +50,9 @@ def extract_sample_id(path):
 def build_pairs_dataframe(data_dir):
     img_paths = {extract_sample_id(p): p for p in (data_dir / 'imgs').glob('*.tif')}
     mask_paths = {extract_sample_id(p): p for p in (data_dir / 'masks').glob('*.tif')}
-
-    if set(img_paths) != set(mask_paths):
-        missing_imgs = sorted(set(mask_paths) - set(img_paths))
-        missing_masks = sorted(set(img_paths) - set(mask_paths))
-        raise ValueError(f'Unpaired files found. missing_imgs={missing_imgs[:5]} missing_masks={missing_masks[:5]}')
-
+    common_ids = sorted(set(img_paths.keys()) & set(mask_paths.keys()), key=int)
     rows = []
-    for sample_id in sorted(img_paths, key=int):
+    for sample_id in common_ids:
         rows.append(
             {
                 'sample_id': sample_id,
