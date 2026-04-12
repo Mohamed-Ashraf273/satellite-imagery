@@ -25,16 +25,18 @@ class Config:
     BRIGHT_PIXEL_MEAN_THRESHOLD = 0.85
     SATURATED_BAND_THRESHOLD = 0.98
     MAX_SATURATED_BANDS = 6
+    OUTLIER_WINDOW_SIZE = 3
+    OUTLIER_MEAN_DIFF_THRESHOLD = 0.10
+    OUTLIER_MAX_DIFF_THRESHOLD = 0.25
+    OUTLIER_MIN_BAND_COUNT = 4
     DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-    BAND_MEANS: np.ndarray | None = field(default=None, init=False)
-    BAND_STDS: np.ndarray | None = field(default=None, init=False)
 
     TRAIN_CAPS_CLASSIC = {
         1: 400_000,   # Greenery
         2: 400_000,   # Sand
         3: None,      # Water -> keep all
-        4: 500_000,      # Cement -> keep all
+        4: 450_000,      # Cement -> keep all
     }
 
     TRAIN_CAPS_DEEP = {

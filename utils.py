@@ -7,7 +7,7 @@ import pandas as pd
 import rasterio
 
 from config import config
-from scipy.ndimage import binary_dilation, label
+from scipy.ndimage import binary_dilation, label, median_filter
 from tqdm import tqdm
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report, confusion_matrix, jaccard_score
@@ -115,7 +115,33 @@ def build_pixel_quality_mask(img):
         (band_mean >= config.BRIGHT_PIXEL_MEAN_THRESHOLD)
         | (saturated_band_count >= config.MAX_SATURATED_BANDS)
     )
-    return ~(dark_pixels | bright_pixels)
+    outlier_pixels = build_pixel_outlier_mask(bands)
+    return ~(dark_pixels | bright_pixels | outlier_pixels)
+
+
+def build_pixel_outlier_mask(
+    bands,
+    window_size=config.OUTLIER_WINDOW_SIZE,
+    mean_diff_threshold=config.OUTLIER_MEAN_DIFF_THRESHOLD,
+    max_diff_threshold=config.OUTLIER_MAX_DIFF_THRESHOLD,
+    min_band_count=config.OUTLIER_MIN_BAND_COUNT,
+):
+    bands = np.asarray(bands, dtype=np.float32)
+    local_median = median_filter(
+        bands,
+        size=(1, window_size, window_size),
+        mode='nearest',
+    )
+    abs_diff = np.abs(bands - local_median)
+    mean_abs_diff = np.mean(abs_diff, axis=0)
+    max_abs_diff = np.max(abs_diff, axis=0)
+    inconsistent_band_count = np.sum(abs_diff >= mean_diff_threshold, axis=0)
+
+    return (
+        (mean_abs_diff >= mean_diff_threshold)
+        & (max_abs_diff >= max_diff_threshold)
+        & (inconsistent_band_count >= min_band_count)
+    )
 
 
 def refine_mask_small_components(
@@ -296,24 +322,52 @@ def build_strata(df):
     return strata
 
 
+def safe_stratify_labels(labels, test_size, split_name):
+    counts = labels.value_counts()
+    num_classes = int(counts.shape[0])
+    min_count = int(counts.min()) if num_classes > 0 else 0
+    n_samples = int(labels.shape[0])
+    n_test = int(np.ceil(n_samples * test_size)) if isinstance(test_size, float) else int(test_size)
+    n_train = n_samples - n_test
+
+    if min_count < 2:
+        too_small = counts[counts < 2].index.tolist()
+        print(
+            f"[{split_name}] Falling back to non-stratified split: "
+            f"strata with fewer than 2 samples: {too_small}"
+        )
+        return None
+
+    if n_train < num_classes or n_test < num_classes:
+        print(
+            f"[{split_name}] Falling back to non-stratified split: "
+            f"n_train={n_train}, n_test={n_test}, num_strata={num_classes}"
+        )
+        return None
+
+    return labels
+
+
 def split_metadata(meta, random_state=config.RANDOM_STATE):
     meta = meta.copy()
     meta['stratum'] = build_strata(meta)
+    stratify_labels = safe_stratify_labels(meta['stratum'], test_size=0.20, split_name='train/temp')
 
     train_df, temp_df = train_test_split(
         meta,
         test_size=0.20,
         random_state=random_state,
-        stratify=meta['stratum'],
+        stratify=stratify_labels,
     )
 
     temp_df = temp_df.copy()
     temp_df['stratum'] = build_strata(temp_df)
+    stratify_labels = safe_stratify_labels(temp_df['stratum'], test_size=0.50, split_name='val/test')
     val_df, test_df = train_test_split(
         temp_df,
         test_size=0.50,
         random_state=random_state,
-        stratify=temp_df['stratum'],
+        stratify=stratify_labels,
     )
 
     return train_df.reset_index(drop=True), val_df.reset_index(drop=True), test_df.reset_index(drop=True)
