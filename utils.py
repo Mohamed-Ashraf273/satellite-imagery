@@ -374,6 +374,7 @@ def split_metadata(meta, random_state=config.RANDOM_STATE):
 
     return train_df.reset_index(drop=True), val_df.reset_index(drop=True), test_df.reset_index(drop=True)
 
+
 def print_split_summary(name, df):
     print(f'[{name}] images: {len(df)}')
     for cls in range(5):
@@ -381,6 +382,7 @@ def print_split_summary(name, df):
         images = int((df[f'count_{cls}'] > 0).sum())
         print(f"  {config.CLASS_NAMES[cls]:<8} pixels={pixels:>9,} images={images:>3}")
     print('  strata:', df['stratum'].value_counts().to_dict())
+
 
 def plot_class_distribution(y, title):
     classes, counts = np.unique(y, return_counts=True)
