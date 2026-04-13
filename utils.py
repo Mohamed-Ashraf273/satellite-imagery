@@ -147,22 +147,6 @@ def build_pixel_outlier_mask(
     )
 
 
-def denoise_img_for_features(img):
-    img = np.asarray(img, dtype=np.float32)
-    outlier_mask = build_pixel_outlier_mask(img)
-    if not np.any(outlier_mask):
-        return img
-
-    local_median = median_filter(
-        img,
-        size=(1, config.OUTLIER_WINDOW_SIZE, config.OUTLIER_WINDOW_SIZE),
-        mode='nearest',
-    )
-    clean = img.copy()
-    clean[:, outlier_mask] = local_median[:, outlier_mask]
-    return clean
-
-
 def refine_mask_small_components(
     mask,
     max_component_size=128,
