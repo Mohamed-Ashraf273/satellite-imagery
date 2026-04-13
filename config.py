@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import numpy as np
 import torch
 
 from dataclasses import dataclass
@@ -58,13 +57,6 @@ class Config:
 
     LABEL_TO_XGB = {1: 0, 2: 1, 3: 2, 4: 3}
     XGB_TO_LABEL = {v: k for k, v in LABEL_TO_XGB.items()}
-
-    def set_band_stats_once(self, means, stds):
-        if self.BAND_MEANS is not None or self.BAND_STDS is not None:
-            raise RuntimeError("Band stats were already assigned.")
-
-        object.__setattr__(self, "BAND_MEANS", np.asarray(means, dtype=np.float32))
-        object.__setattr__(self, "BAND_STDS", np.asarray(stds, dtype=np.float32))
     
 
 config = Config()
