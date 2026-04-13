@@ -1,0 +1,17 @@
+numpy
+pandas
+scipy
+scikit-learn
+matplotlib
+tqdm
+joblib
+rasterio
+xgboost
+torch
+torchvision
+segmentation-models-pytorch
+
+# Optional data export / collection notebooks
+earthengine-api
+requests
+selenium
