@@ -25,6 +25,7 @@ class Config:
     BRIGHT_PIXEL_MEAN_THRESHOLD = 0.85
     SATURATED_BAND_THRESHOLD = 0.98
     MAX_SATURATED_BANDS = 6
+    MAX_NAN_PIXEL_FRACTION = 0.95
     OUTLIER_WINDOW_SIZE = 3
     OUTLIER_MEAN_DIFF_THRESHOLD = 0.10
     OUTLIER_MAX_DIFF_THRESHOLD = 0.25
@@ -35,15 +36,8 @@ class Config:
     TRAIN_CAPS_CLASSIC = {
         1: 400_000,   # Greenery
         2: 400_000,   # Sand
-        3: None,      # Water -> keep all
+        3: 500_000,      # Water -> keep all
         4: 450_000,      # Cement -> keep all
-    }
-
-    TRAIN_CAPS_DEEP = {
-        1: None,   # Greenery
-        2: None,   # Sand
-        3: None,   # Water -> keep all
-        4: None,   # Cement -> keep all
     }
 
     CLASS_NAMES = {
@@ -55,13 +49,11 @@ class Config:
     }
 
     REFINE_KWARGS = {
-        "low_conf_threshold": 40,
         "max_component_size": 128,
         "min_neighbor_pixels": 8,
         "iterations": 2,
         "connectivity": 2,
         "target_classes": [0],
-        "confidence_cap": 80,
     }
 
     LABEL_TO_XGB = {1: 0, 2: 1, 3: 2, 4: 3}

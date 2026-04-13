@@ -41,16 +41,15 @@ def show_sample(img, mask, pred=None):
 
 
 def extract_sample_id(path):
-    match = re.search(r'(\d+)', Path(path).stem)
-    if not match:
-        raise ValueError(f'Could not extract numeric id from {path}')
-    return match.group(1)
+    stem = Path(path).stem
+    stem = re.sub(r'_(Spectral|Mask)(?:_\d+px)?$', '', stem, flags=re.IGNORECASE)
+    return stem
 
 
 def build_pairs_dataframe(data_dir):
     img_paths = {extract_sample_id(p): p for p in (data_dir / 'imgs').glob('*.tif')}
     mask_paths = {extract_sample_id(p): p for p in (data_dir / 'masks').glob('*.tif')}
-    common_ids = sorted(set(img_paths.keys()) & set(mask_paths.keys()), key=int)
+    common_ids = sorted(set(img_paths.keys()) & set(mask_paths.keys()), key=str)
     rows = []
     for sample_id in common_ids:
         rows.append(
@@ -61,7 +60,7 @@ def build_pairs_dataframe(data_dir):
             }
         )
 
-    return pd.DataFrame(rows)
+    return pd.DataFrame(rows, columns=['sample_id', 'img_path', 'mask_path'])
 
 
 def mask_summary(mask_path):
@@ -119,6 +118,10 @@ def build_pixel_quality_mask(img):
     return ~(dark_pixels | bright_pixels | outlier_pixels)
 
 
+def build_nan_pixel_mask(img):
+    return np.isnan(np.asarray(img, dtype=np.float32)).any(axis=0)
+
+
 def build_pixel_outlier_mask(
     bands,
     window_size=config.OUTLIER_WINDOW_SIZE,
@@ -144,25 +147,37 @@ def build_pixel_outlier_mask(
     )
 
 
+# def denoise_img_for_features(img):
+#     img = np.asarray(img, dtype=np.float32)
+#     outlier_mask = build_pixel_outlier_mask(img)
+#     if not np.any(outlier_mask):
+#         return img
+
+#     local_median = median_filter(
+#         img,
+#         size=(1, config.OUTLIER_WINDOW_SIZE, config.OUTLIER_WINDOW_SIZE),
+#         mode='nearest',
+#     )
+#     clean = img.copy()
+#     clean[:, outlier_mask] = local_median[:, outlier_mask]
+#     return clean
+
+
 def refine_mask_small_components(
     mask,
-    confidence=None,
-    low_conf_threshold=40,
     max_component_size=128,
     min_neighbor_pixels=8,
     iterations=2,
     connectivity=2,
     target_classes=None,
-    confidence_cap=80,
     return_details=False,
 ):
-    refined = np.asarray(mask).copy()
-    if confidence is None:
-        confidence = np.full(refined.shape, 100.0, dtype=np.float32)
-    else:
-        confidence = np.asarray(confidence, dtype=np.float32)
-
-    refined_confidence = confidence.copy()
+    refined = np.asarray(mask)
+    if refined.dtype != np.uint8:
+        refined = refined.astype(np.uint8)
+    
+    refined = refined.copy()
+    
     changed_mask = np.zeros(refined.shape, dtype=bool)
     structure = _connected_structure(connectivity=connectivity)
     if target_classes is None:
@@ -183,18 +198,12 @@ def refine_mask_small_components(
             for component_id in range(1, num_components + 1):
                 component = labeled == component_id
                 component_size = int(component.sum())
-                component_conf = float(confidence[component].mean())
-
-                should_relabel = (
-                    component_size <= max_component_size
-                    or component_conf < low_conf_threshold
-                )
+                should_relabel = component_size <= max_component_size
                 if not should_relabel:
                     continue
 
                 border = binary_dilation(component, structure=structure) & ~component
                 neighbor_labels = refined[border]
-                neighbor_conf = confidence[border]
 
                 if neighbor_labels.size == 0:
                     continue
@@ -204,26 +213,16 @@ def refine_mask_small_components(
                     continue
 
                 neighbor_labels = neighbor_labels[valid]
-                neighbor_conf = neighbor_conf[valid]
-
                 scores = {}
                 for neighbor_cls in np.unique(neighbor_labels):
                     cls_pixels = neighbor_labels == neighbor_cls
-                    weighted_score = float(cls_pixels.sum()) + float(
-                        neighbor_conf[cls_pixels].sum() / 100.0
-                    )
-                    scores[int(neighbor_cls)] = weighted_score
+                    scores[int(neighbor_cls)] = float(cls_pixels.sum())
 
                 new_cls, best_score = max(scores.items(), key=lambda item: item[1])
                 if best_score < min_neighbor_pixels:
                     continue
 
-                new_conf = float(
-                    np.median(neighbor_conf[neighbor_labels == new_cls])
-                )
-                new_conf = max(component_conf, min(new_conf, float(confidence_cap)))
                 refined[component] = new_cls
-                refined_confidence[component] = new_conf
                 changed_mask[component] = True
                 changed = True
 
@@ -231,67 +230,62 @@ def refine_mask_small_components(
             break
 
     if return_details:
-        return refined, refined_confidence, changed_mask.astype(np.uint8)
+        return refined, changed_mask.astype(np.uint8)
     return refined
 
 
 def refine_mask_from_path(
     mask_path,
-    low_conf_threshold=40,
     max_component_size=128,
     min_neighbor_pixels=8,
     iterations=2,
     connectivity=2,
     target_classes=None,
-    confidence_cap=80,
     return_details=False,
 ):
     with rasterio.open(mask_path) as src:
         mask = src.read(1)
-        confidence = src.read(2) if src.count >= 2 else None
 
     return refine_mask_small_components(
         mask=mask,
-        confidence=confidence,
-        low_conf_threshold=low_conf_threshold,
         max_component_size=max_component_size,
         min_neighbor_pixels=min_neighbor_pixels,
         iterations=iterations,
         connectivity=connectivity,
         target_classes=target_classes,
-        confidence_cap=confidence_cap,
         return_details=return_details,
     )
 
 
-def preprocess_img(img_path, mask_path):
+def preprocess_img(img_path, mask_path, train=False):
     with rasterio.open(img_path) as src:
         img = src.read().astype(np.float32)
     with rasterio.open(mask_path) as src:
         mask = src.read(1)
-        if src.count >= 2:
-            confidence = src.read(2).astype(np.float32)
-        else:
-            confidence = np.full(mask.shape, 100.0, dtype=np.float32)
-    
-    refined_mask, refined_confidence, _ = refine_mask_small_components(
+
+    img_h, img_w = img.shape[1], img.shape[2]
+    mask_h, mask_w = mask.shape[0], mask.shape[1]
+    if (img_h != mask_h) or (img_w != mask_w):
+        h = min(img_h, mask_h)
+        w = min(img_w, mask_w)
+        img = img[:, :h, :w]
+        mask = mask[:h, :w]
+
+    nan_pixel_mask = build_nan_pixel_mask(img)
+    refined_mask, _ = refine_mask_small_components(
         mask,
-        confidence=confidence,
         return_details=True,
         **config.REFINE_KWARGS,
     )
+
+    img = np.nan_to_num(img, nan=0.0)
     img = np.clip(img, 0, 10000) / 10000.0
-    pixel_valid = build_pixel_quality_mask(img)
+    pixel_valid = build_pixel_quality_mask(img) & (~nan_pixel_mask)
 
-    refined_mask = refined_mask.copy()
-    refined_mask[~pixel_valid] = 0
+    if train:
+        refined_mask[~pixel_valid] = 0
 
-    confidence = np.where(
-        pixel_valid,
-        np.clip(refined_confidence / 100.0, config.CONFIDENCE_FLOOR, 1.0),
-        0.0,
-    ).astype(np.float32)
-    return img, refined_mask, confidence, pixel_valid
+    return img, refined_mask, pixel_valid
 
 
 def build_strata(df):
@@ -350,6 +344,13 @@ def safe_stratify_labels(labels, test_size, split_name):
 
 def split_metadata(meta, random_state=config.RANDOM_STATE):
     meta = meta.copy()
+    valid_rows = []
+
+    for row in meta.itertuples(index=False):
+        if is_valid_image(row.img_path):
+            valid_rows.append(row)
+
+    meta = pd.DataFrame(valid_rows)
     meta['stratum'] = build_strata(meta)
     stratify_labels = safe_stratify_labels(meta['stratum'], test_size=0.20, split_name='train/temp')
 
@@ -363,6 +364,7 @@ def split_metadata(meta, random_state=config.RANDOM_STATE):
     temp_df = temp_df.copy()
     temp_df['stratum'] = build_strata(temp_df)
     stratify_labels = safe_stratify_labels(temp_df['stratum'], test_size=0.50, split_name='val/test')
+    
     val_df, test_df = train_test_split(
         temp_df,
         test_size=0.50,
@@ -371,7 +373,6 @@ def split_metadata(meta, random_state=config.RANDOM_STATE):
     )
 
     return train_df.reset_index(drop=True), val_df.reset_index(drop=True), test_df.reset_index(drop=True)
-
 
 def print_split_summary(name, df):
     print(f'[{name}] images: {len(df)}')
@@ -451,6 +452,13 @@ def decode_labels(y):
     return np.array([config.XGB_TO_LABEL[int(v)] for v in y], dtype=np.uint8)
 
 
+def is_valid_image(path):
+    with rasterio.open(path) as src:
+        img = src.read().astype(np.float32)
+    nan_fraction = float(build_nan_pixel_mask(img).mean())
+    return nan_fraction < config.MAX_NAN_PIXEL_FRACTION
+
+
 def evaluate_split(name, model, X, y):
     y_pred = decode_labels(model.predict(X))
     print(f'===== {name} =====')
@@ -476,8 +484,6 @@ def evaluate_split(name, model, X, y):
     fig.colorbar(im, ax=ax)
     plt.tight_layout()
     plt.show()
-
-    return cm, macro_iou, per_class_iou
 
 
 def get_feature_corr_ranking(X, y, feature_names=None):
