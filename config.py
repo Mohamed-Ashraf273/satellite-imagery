@@ -34,9 +34,9 @@ class Config:
 
 
     TRAIN_CAPS_CLASSIC = {
-        1: 500_000,   # Greenery
-        2: 550_000,   # Sand
-        3: 500_000,      # Water -> keep all
+        1: 550_000,   # Greenery
+        2: 700_000,   # Sand
+        3: 550_000,      # Water -> keep all
         4: 600_000,      # Cement -> keep all
     }
 
