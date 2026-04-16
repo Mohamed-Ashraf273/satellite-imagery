@@ -7,8 +7,11 @@ import pandas as pd
 import rasterio
 
 from config import config
+from tqdm import tqdm
+from joblib import Parallel, delayed
 from scipy.ndimage import binary_dilation, label, median_filter
 from tqdm import tqdm
+from scipy.ndimage import uniform_filter
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report, confusion_matrix, jaccard_score
 
@@ -104,22 +107,27 @@ def build_pixel_quality_mask(img):
     bands = img[:12].astype(np.float32)
     band_mean = np.mean(bands, axis=0)
     band_max = np.max(bands, axis=0)
-    saturated_band_count = np.sum(bands >= config.SATURATED_BAND_THRESHOLD, axis=0)
 
     dark_pixels = (
         (band_mean <= config.DARK_PIXEL_MEAN_THRESHOLD)
         & (band_max <= config.DARK_PIXEL_MAX_THRESHOLD)
     )
-    bright_pixels = (
-        (band_mean >= config.BRIGHT_PIXEL_MEAN_THRESHOLD)
-        | (saturated_band_count >= config.MAX_SATURATED_BANDS)
-    )
     outlier_pixels = build_pixel_outlier_mask(bands)
-    return ~(dark_pixels | bright_pixels | outlier_pixels)
+    return ~(dark_pixels | outlier_pixels)
 
 
 def build_nan_pixel_mask(img):
     return np.isnan(np.asarray(img, dtype=np.float32)).any(axis=0)
+
+
+def build_bright_pixel_mask(img):
+    bands = np.asarray(img[:12], dtype=np.float32)
+    band_mean = np.mean(bands, axis=0)
+    saturated_band_count = np.sum(bands >= config.SATURATED_BAND_THRESHOLD, axis=0)
+    return (
+        (band_mean >= config.BRIGHT_PIXEL_MEAN_THRESHOLD)
+        | (saturated_band_count >= config.MAX_SATURATED_BANDS)
+    )
 
 
 def build_pixel_outlier_mask(
@@ -241,7 +249,58 @@ def refine_mask_from_path(
     )
 
 
-def preprocess_img(img_path, mask_path, train=False):
+def fill_img_holes_from_neighbors(
+    img,
+    fill_mask,
+    iterations=4,
+    window_size=3,
+):
+    filled = np.asarray(img, dtype=np.float32).copy()
+    fill_mask = np.asarray(fill_mask, dtype=bool)
+    if not np.any(fill_mask):
+        return filled
+
+    remaining = fill_mask.copy()
+    for _ in range(iterations):
+        if not np.any(remaining):
+            break
+
+        local_median = median_filter(
+            filled,
+            size=(1, window_size, window_size),
+            mode='nearest',
+        )
+        filled[:, remaining] = local_median[:, remaining]
+        remaining = fill_mask & np.all(filled == 0, axis=0)
+
+    return filled
+
+
+def compress_bright_pixels(
+    img,
+    bright_mask,
+    target_mean=config.BRIGHT_PIXEL_TARGET_MEAN,
+):
+    adjusted = np.asarray(img, dtype=np.float32).copy()
+    bright_mask = np.asarray(bright_mask, dtype=bool)
+    if not np.any(bright_mask):
+        return adjusted
+
+    bands = adjusted[:config.BAND_SIZE]
+    band_mean = np.mean(bands, axis=0)
+    safe_mean = np.maximum(band_mean, 1e-6)
+    scale = np.minimum(1.0, target_mean / safe_mean)
+    scale = scale.astype(np.float32)
+    bands[:, bright_mask] *= scale[bright_mask]
+    bands[:, bright_mask] = np.minimum(
+        bands[:, bright_mask],
+        config.SATURATED_BAND_THRESHOLD,
+    )
+    adjusted[:config.BAND_SIZE] = bands
+    return adjusted
+
+
+def preprocess_img(img_path, mask_path, train=False, ml='dl'):
     with rasterio.open(img_path) as src:
         img = src.read().astype(np.float32)
     with rasterio.open(mask_path) as src:
@@ -256,18 +315,29 @@ def preprocess_img(img_path, mask_path, train=False):
         mask = mask[:h, :w]
 
     nan_pixel_mask = build_nan_pixel_mask(img)
-    refined_mask, _ = refine_mask_small_components(
-        mask,
-        return_details=True,
-        **config.REFINE_KWARGS,
-    )
-
     img = np.nan_to_num(img, nan=0.0)
+    zero_pixel_mask = np.all(img == 0, axis=0)
+
+    refined_mask = mask.copy()
+    if ml != 'classic':
+        refined_mask, refined_changed_mask = refine_mask_small_components(
+            mask,
+            return_details=True,
+            **config.REFINE_KWARGS,
+        )
+
+        fill_mask = refined_changed_mask.astype(bool) & zero_pixel_mask
+        img = fill_img_holes_from_neighbors(img, fill_mask=fill_mask)
+
     img = np.clip(img, 0, 10000) / 10000.0
-    pixel_valid = build_pixel_quality_mask(img) & (~nan_pixel_mask)
+    bright_pixel_mask = build_bright_pixel_mask(img)
+    img = compress_bright_pixels(img, bright_mask=bright_pixel_mask)
 
     if train:
+        pixel_valid = build_pixel_quality_mask(img) & (~nan_pixel_mask)
         refined_mask[~pixel_valid] = 0
+    else:
+        pixel_valid = np.ones(refined_mask.shape, dtype=bool)
 
     return img, refined_mask, pixel_valid
 
@@ -359,6 +429,175 @@ def split_metadata(meta, random_state=config.RANDOM_STATE):
     return train_df.reset_index(drop=True), val_df.reset_index(drop=True), test_df.reset_index(drop=True)
 
 
+def build_dataset(split_df, process_pair, concatenate, train=False, n_jobs=-1):
+    records = split_df[['img_path', 'mask_path']].to_dict('records')
+    results = Parallel(n_jobs=n_jobs, backend='loky')(
+        delayed(process_pair)(row['img_path'], row['mask_path'], train=train)
+        for row in tqdm(records, desc='Building dataset')
+    )
+
+    X_all, y_all, feature_names = concatenate(results)
+    return X_all, y_all, feature_names
+
+
+def local_mean_std(x, size=3):
+    mean = uniform_filter(x, size=size)
+    mean_sq = uniform_filter(x * x, size=size)
+    var = np.maximum(mean_sq - mean * mean, 0.0)
+    std = np.sqrt(var)
+    return mean, std
+
+
+def normalized_diff(a, b, eps=1e-6):
+    return (a - b) / (a + b + eps)
+
+
+def extract_features(img):
+    b_raw = img.astype(np.float32)
+
+    blue = b_raw[1]
+    green = b_raw[2]
+    red = b_raw[3]
+    nir = b_raw[7]
+    swir1 = b_raw[10]
+    swir2 = b_raw[11]
+
+    h, w = red.shape
+
+    bands_mean = np.mean(b_raw, axis=0)
+    bands_std = np.std(b_raw, axis=0)
+    brightness = np.mean(b_raw[[1, 2, 3]], axis=0)
+    visible_std = np.std(b_raw[[1, 2, 3]], axis=0)
+
+    ndvi = normalized_diff(nir, red)
+    ndwi = normalized_diff(green, nir)
+    mndwi = normalized_diff(green, swir1)
+    ndbi = normalized_diff(swir1, nir)
+    ndmi = normalized_diff(nir, swir1)
+    nbr = normalized_diff(nir, swir2)
+    gndvi = normalized_diff(nir, green)
+
+    bsi = ((swir1 + red) - (nir + blue)) / ((swir1 + red) + (nir + blue) + 1e-6)
+    savi = 1.5 * (nir - red) / (nir + red + 0.5 + 1e-6)
+    evi = 2.5 * (nir - red) / (nir + 6.0 * red - 7.5 * blue + 1.0 + 1e-6)
+
+    msavi_term = (2 * nir + 1) ** 2 - 8 * (nir - red)
+    msavi_term = np.maximum(msavi_term, 0.0)
+    msavi = (2 * nir + 1 - np.sqrt(msavi_term)) / 2.0
+
+    awei_sh = blue + 2.5 * green - 1.5 * (nir + swir1) - 0.25 * swir2
+    awei_nsh = 4.0 * (green - swir1) - (0.25 * nir + 2.75 * swir2)
+
+    nir_red_ratio = nir / (red + 1e-6)
+    nir_green_ratio = nir / (green + 1e-6)
+    red_green_ratio = red / (green + 1e-6)
+    blue_green_ratio = blue / (green + 1e-6)
+    swir_ratio = swir1 / (swir2 + 1e-6)
+    swir1_red_ratio = swir1 / (red + 1e-6)
+    swir1_nir_ratio = swir1 / (nir + 1e-6)
+
+    red_blue_diff = red - blue
+    green_red_diff = green - red
+    nir_swir1_diff = nir - swir1
+
+    ndvi_mean_3, ndvi_std_3 = local_mean_std(ndvi, size=3)
+    ndvi_mean_5, ndvi_std_5 = local_mean_std(ndvi, size=5)
+    mndwi_mean_3, mndwi_std_3 = local_mean_std(mndwi, size=3)
+    ndbi_mean_3, ndbi_std_3 = local_mean_std(ndbi, size=3)
+    nir_mean_3, nir_std_3 = local_mean_std(nir, size=3)
+    swir1_mean_3, swir1_std_3 = local_mean_std(swir1, size=3)
+
+    features = np.concatenate(
+        [
+            b_raw,
+            ndvi[np.newaxis, ...],
+            ndwi[np.newaxis, ...],
+            mndwi[np.newaxis, ...],
+            ndbi[np.newaxis, ...],
+            ndmi[np.newaxis, ...],
+            nbr[np.newaxis, ...],
+            gndvi[np.newaxis, ...],
+            bsi[np.newaxis, ...],
+            savi[np.newaxis, ...],
+            evi[np.newaxis, ...],
+            msavi[np.newaxis, ...],
+            awei_sh[np.newaxis, ...],
+            awei_nsh[np.newaxis, ...],
+            brightness[np.newaxis, ...],
+            visible_std[np.newaxis, ...],
+            bands_mean[np.newaxis, ...],
+            bands_std[np.newaxis, ...],
+            nir_red_ratio[np.newaxis, ...],
+            nir_green_ratio[np.newaxis, ...],
+            red_green_ratio[np.newaxis, ...],
+            blue_green_ratio[np.newaxis, ...],
+            swir_ratio[np.newaxis, ...],
+            swir1_red_ratio[np.newaxis, ...],
+            swir1_nir_ratio[np.newaxis, ...],
+            red_blue_diff[np.newaxis, ...],
+            green_red_diff[np.newaxis, ...],
+            nir_swir1_diff[np.newaxis, ...],
+            ndvi_mean_3[np.newaxis, ...],
+            ndvi_std_3[np.newaxis, ...],
+            ndvi_mean_5[np.newaxis, ...],
+            ndvi_std_5[np.newaxis, ...],
+            mndwi_mean_3[np.newaxis, ...],
+            mndwi_std_3[np.newaxis, ...],
+            ndbi_mean_3[np.newaxis, ...],
+            ndbi_std_3[np.newaxis, ...],
+            nir_mean_3[np.newaxis, ...],
+            nir_std_3[np.newaxis, ...],
+            swir1_mean_3[np.newaxis, ...],
+            swir1_std_3[np.newaxis, ...],
+        ],
+        axis=0,
+    )
+
+    feature_names = [f"B{i + 1}" for i in range(b_raw.shape[0])] + [
+        "ndvi",
+        "ndwi",
+        "mndwi",
+        "ndbi",
+        "ndmi",
+        "nbr",
+        "gndvi",
+        "bsi",
+        "savi",
+        "evi",
+        "msavi",
+        "awei_sh",
+        "awei_nsh",
+        "brightness",
+        "visible_std",
+        "bands_mean",
+        "bands_std",
+        "nir_red_ratio",
+        "nir_green_ratio",
+        "red_green_ratio",
+        "blue_green_ratio",
+        "swir_ratio",
+        "swir1_red_ratio",
+        "swir1_nir_ratio",
+        "red_blue_diff",
+        "green_red_diff",
+        "nir_swir1_diff",
+        "ndvi_mean_3",
+        "ndvi_std_3",
+        "ndvi_mean_5",
+        "ndvi_std_5",
+        "mndwi_mean_3",
+        "mndwi_std_3",
+        "ndbi_mean_3",
+        "ndbi_std_3",
+        "nir_mean_3",
+        "nir_std_3",
+        "swir1_mean_3",
+        "swir1_std_3",
+    ]
+
+    return features, feature_names
+
+
 def print_split_summary(name, df):
     print(f'[{name}] images: {len(df)}')
     for cls in range(5):
@@ -445,22 +684,60 @@ def is_valid_image(path):
     return nan_fraction < config.MAX_NAN_PIXEL_FRACTION
 
 
+def compute_iou_scores(y_true, y_pred, classes=(1, 2, 3, 4)):
+    per_class = {}
+    for cls in classes:
+        true_cls = y_true == cls
+        pred_cls = y_pred == cls
+        union = np.logical_or(true_cls, pred_cls).sum()
+        if union == 0:
+            per_class[cls] = np.nan
+        else:
+            per_class[cls] = float(np.logical_and(true_cls, pred_cls).sum() / union)
+    miou = float(np.nanmean(list(per_class.values())))
+    return miou, per_class
+
+
+def compute_sample_metrics(mask, pred_mask, classes=(1, 2, 3, 4)):
+    valid = np.asarray(mask) != 0
+    if not np.any(valid):
+        return float('nan'), {cls: np.nan for cls in classes}
+    return compute_iou_scores(mask[valid], pred_mask[valid], classes=classes)
+
+
+def predict_xgb_mask(model, img_path, mask_path, ml='classic'):
+    img, mask, _ = preprocess_img(img_path, mask_path, ml=ml)
+    features, _ = extract_features(img)
+    X = features.reshape(features.shape[0], -1).T.astype(np.float32)
+    pred_mask = decode_labels(model.predict(X)).reshape(mask.shape).astype(np.uint8)
+    return img, mask, pred_mask
+
+
 def evaluate_split(name, model, X, y):
+    classes = (1, 2, 3, 4)
     y_pred = decode_labels(model.predict(X))
+    valid = y != 0
+    y_eval = y[valid]
+    y_pred_eval = y_pred[valid]
     print(f'===== {name} =====')
-    print(classification_report(y, y_pred, digits=4, labels=[1, 2, 3, 4]))
-    cm = confusion_matrix(y, y_pred, labels=[1, 2, 3, 4])
+    print(classification_report(y_eval, y_pred_eval, digits=4, labels=list(classes)))
+    cm = confusion_matrix(y_eval, y_pred_eval, labels=list(classes))
     print('Confusion Matrix:\n', cm)
 
-    macro_iou = jaccard_score(y, y_pred, average='macro', labels=[1, 2, 3, 4])
-    per_class_iou = jaccard_score(y, y_pred, average=None, labels=[1, 2, 3, 4])
+    macro_iou, per_class_iou = compute_iou_scores(y_eval, y_pred_eval, classes=classes)
     print('mIoU:', macro_iou)
-    print('Per-class IoU:', {config.CLASS_NAMES[cls]: float(score) for cls, score in zip([1, 2, 3, 4], per_class_iou)})
+    print(
+        'Per-class IoU:',
+        {
+            config.CLASS_NAMES[cls]: None if np.isnan(score) else float(score)
+            for cls, score in per_class_iou.items()
+        },
+    )
 
     fig, ax = plt.subplots(figsize=(5, 4))
     im = ax.imshow(cm, cmap='Blues')
-    ax.set_xticks(range(4), [config.CLASS_NAMES[c] for c in [1, 2, 3, 4]], rotation=45, ha='right')
-    ax.set_yticks(range(4), [config.CLASS_NAMES[c] for c in [1, 2, 3, 4]])
+    ax.set_xticks(range(4), [config.CLASS_NAMES[c] for c in classes], rotation=45, ha='right')
+    ax.set_yticks(range(4), [config.CLASS_NAMES[c] for c in classes])
     ax.set_xlabel('True')
     ax.set_ylabel('Predicted')
     ax.set_title(f'{name} Confusion Matrix')

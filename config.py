@@ -11,20 +11,20 @@ class Config:
     ROOT = Path('.')
     DATA_DIR = ROOT / 'data'
     BATCH_SIZE = 8
+    BAND_SIZE = 12
     NUM_EPOCHS = 25
     LR = 3e-4
     NUM_WORKERS = 2
     NUM_CLASSES = 5
     IGNORE_INDEX = 0
     RANDOM_STATE = 42
-    MIN_CONFIDENCE = 20
-    CONFIDENCE_FLOOR = 0.25
-    DARK_PIXEL_MEAN_THRESHOLD = 0.03
-    DARK_PIXEL_MAX_THRESHOLD = 0.08
+    DARK_PIXEL_MEAN_THRESHOLD = 0.02
+    DARK_PIXEL_MAX_THRESHOLD = 0.06
     BRIGHT_PIXEL_MEAN_THRESHOLD = 0.85
+    BRIGHT_PIXEL_TARGET_MEAN = 0.75
     SATURATED_BAND_THRESHOLD = 0.98
     MAX_SATURATED_BANDS = 6
-    MAX_NAN_PIXEL_FRACTION = 0.95
+    MAX_NAN_PIXEL_FRACTION = 0.90
     OUTLIER_WINDOW_SIZE = 3
     OUTLIER_MEAN_DIFF_THRESHOLD = 0.10
     OUTLIER_MAX_DIFF_THRESHOLD = 0.25
@@ -34,9 +34,9 @@ class Config:
 
     TRAIN_CAPS_CLASSIC = {
         1: 550_000,   # Greenery
-        2: 700_000,   # Sand
+        2: 600_000,   # Sand
         3: 550_000,      # Water -> keep all
-        4: 600_000,      # Cement -> keep all
+        4: 650_000,      # Cement -> keep all
     }
 
     CLASS_NAMES = {
