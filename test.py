@@ -184,7 +184,7 @@ def main():
         pred = pred.reshape(img.shape[1], img.shape[2]).astype(np.uint8)
         profile = read_profile(img_path)
         profile.update(count=1, dtype=rasterio.uint8, nodata=0)
-        output_path = output_dir / f"{img_path.stem}_prediction.tif"
+        output_path = output_dir / f"{img_path.stem}_Mask.tif"
         with rasterio.open(output_path, "w", **profile) as dst:
             dst.write(pred, 1)
 
