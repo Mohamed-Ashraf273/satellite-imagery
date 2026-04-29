@@ -158,7 +158,7 @@ def predict_dl(model, img):
     h, w = img.shape[1], img.shape[2]
     x = torch.from_numpy(img).unsqueeze(0).to(config.DEVICE)
     logits = model(x)
-    pred = torch.argmax(logits, dim=1).squeeze(0).cpu().numpy().astype(np.uint8)
+    pred = torch.argmax(logits[:, 1:], dim=1).squeeze(0).cpu().numpy().astype(np.uint8) + 1
     if pred.shape != (h, w):
         raise RuntimeError(f"prediction shape {pred.shape} does not match image shape {(h, w)}")
     return pred
