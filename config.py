@@ -13,7 +13,7 @@ class Config:
     BATCH_SIZE = 8
     BAND_SIZE = 12
     NUM_EPOCHS = 25
-    LR = 3e-4
+    LR = 1e-4
     NUM_WORKERS = 2
     NUM_CLASSES = 5
     IGNORE_INDEX = 0
