@@ -462,8 +462,6 @@ def extract_features(img):
     swir1 = b_raw[10]
     swir2 = b_raw[11]
 
-    h, w = red.shape
-
     bands_mean = np.mean(b_raw, axis=0)
     bands_std = np.std(b_raw, axis=0)
     brightness = np.mean(b_raw[[1, 2, 3]], axis=0)
