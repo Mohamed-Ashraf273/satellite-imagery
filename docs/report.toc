@@ -1,0 +1,21 @@
+\contentsline {section}{\numberline {1}Executive Summary}{2}{section.1}%
+\contentsline {section}{\numberline {2}Data Source and Generation}{2}{section.2}%
+\contentsline {section}{\numberline {3}Dataset Split}{2}{section.3}%
+\contentsline {section}{\numberline {4}Data Diagnosis}{3}{section.4}%
+\contentsline {section}{\numberline {5}Shared Preprocessing}{3}{section.5}%
+\contentsline {section}{\numberline {6}Classical Machine Learning Model}{4}{section.6}%
+\contentsline {subsection}{\numberline {6.1}Feature Engineering}{4}{subsection.6.1}%
+\contentsline {subsection}{\numberline {6.2}Training Data}{5}{subsection.6.2}%
+\contentsline {subsection}{\numberline {6.3}Model Configuration}{5}{subsection.6.3}%
+\contentsline {subsection}{\numberline {6.4}ML Results}{5}{subsection.6.4}%
+\contentsline {section}{\numberline {7}Deep Learning Model}{6}{section.7}%
+\contentsline {subsection}{\numberline {7.1}DL Dataset Construction}{6}{subsection.7.1}%
+\contentsline {subsection}{\numberline {7.2}Architecture}{6}{subsection.7.2}%
+\contentsline {subsection}{\numberline {7.3}Loss, Weights, and Optimization}{7}{subsection.7.3}%
+\contentsline {subsection}{\numberline {7.4}DL Results}{7}{subsection.7.4}%
+\contentsline {section}{\numberline {8}Prediction and Evaluation Scripts}{8}{section.8}%
+\contentsline {subsection}{\numberline {8.1}\texttt {test.py}}{8}{subsection.8.1}%
+\contentsline {subsection}{\numberline {8.2}\texttt {test.sh}}{8}{subsection.8.2}%
+\contentsline {subsection}{\numberline {8.3}\texttt {eval.py}}{8}{subsection.8.3}%
+\contentsline {section}{\numberline {9}Comparison and Observations}{8}{section.9}%
+\contentsline {section}{\numberline {10}Limitations and Next Steps}{9}{section.10}%

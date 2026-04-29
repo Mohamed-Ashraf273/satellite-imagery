@@ -1,0 +1,458 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{amsmath}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue,
+  urlcolor=blue
+}
+
+\title{Sentinel-2 Land Cover Classification Report}
+\author{Team 6\\[0.5em]
+Mohamed Ashraf -- 9220658\\
+Nesma Osama -- 9220912\\
+Mazen Adel -- 9220625\\
+Mohamed Khater -- 9220713}
+\date{\today}
+
+\begin{document}
+\maketitle
+\tableofcontents
+\newpage
+
+\section{Executive Summary}
+
+This project builds a land-cover classifier for Sentinel-2 image tiles. The target labels are:
+\begin{center}
+\begin{tabular}{cl}
+\toprule
+Label & Meaning \\
+\midrule
+0 & Unknown / ignored \\
+1 & Greenery \\
+2 & Sand \\
+3 & Water \\
+4 & Cement \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Two modeling tracks were implemented:
+\begin{itemize}[noitemsep]
+  \item A classical pixel-wise machine learning model using XGBoost and hand-crafted spectral features.
+  \item A deep learning semantic segmentation model using a U-Net with a ResNet-50 encoder and a custom spectral/index stem.
+\end{itemize}
+
+The main saved artifacts are \texttt{model.pkl} for the ML model and \texttt{best\_unet.pth} for the DL model. Production-style inference is handled by \texttt{test.py}, which writes one single-band GeoTIFF prediction mask per input image. No crop or padding is applied during this inference path; each output mask has the same height and width as its input image. The evaluator \texttt{eval.py} compares prediction masks with provided masks and prints only mean IoU.
+
+\section{Data Source and Generation}
+
+The dataset is built from Google Earth Engine exports. The notebook \texttt{generate\_samples\_gee.ipynb} exports Sentinel-2 spectral tiles and Dynamic World label masks. A later export batch focuses on Cairo University, Siwa Oasis, Downtown Cairo, Heliopolis, Maadi, and New Cairo. A grid expansion is used around each base point, with a 4 by 4 grid and 2000 meter spacing, creating 96 export locations for that batch.
+
+The exported files are organized as:
+\begin{verbatim}
+data/samples/imgs/
+data/samples/masks/
+\end{verbatim}
+
+Image/mask pairing is done by the shared sample prefix. For example:
+\begin{verbatim}
+Alexandria_g00_Spectral_300px.tif
+Alexandria_g00_Mask_300px.tif
+\end{verbatim}
+
+Dynamic World labels are remapped to the project classes during sample generation. The project classes are intentionally compact: greenery, sand, water, and cement, with label 0 reserved for unknown or ignored pixels.
+
+\section{Dataset Split}
+
+Metadata is built by scanning masks and counting class pixels. The split is image-level, not pixel-level. The helper \texttt{split\_metadata} first removes images with too much NaN coverage, then performs a train/validation/test split with stratification based on water and cement presence and pixel-count bins.
+
+\begin{center}
+\begin{tabular}{lrrrrrr}
+\toprule
+Split & Images & Unknown & Greenery & Sand & Water & Cement \\
+\midrule
+Train & 447 & 229,585 & 8,257,143 & 18,622,508 & 10,206,745 & 9,019,840 \\
+Validation & 56 & 6,911 & 1,037,356 & 2,386,635 & 1,146,834 & 1,238,211 \\
+Test & 56 & 32,852 & 1,229,080 & 2,372,578 & 1,149,789 & 1,003,942 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The split is balanced at the image level by strata such as water-only, cement-only, water-and-cement, and base scenes. This is important because cement and water are relatively sparse in some tiles and concentrated in others.
+
+\section{Data Diagnosis}
+
+The notebook \texttt{data\_diagnosis.ipynb} inspects random image/mask pairs and reports quality indicators before model training. It checks:
+\begin{itemize}[noitemsep]
+  \item NaN pixels.
+  \item Dark pixels.
+  \item Bright or saturated pixels.
+  \item Local outlier pixels.
+  \item Pixels excluded by preprocessing.
+  \item Raw mask distribution and processed mask distribution.
+  \item Dataset-level band means.
+  \item Duplicate image detection.
+\end{itemize}
+
+In one recorded run, five random samples were inspected:
+\begin{center}
+\begin{tabular}{lrrrrr}
+\toprule
+Sample & NaN \% & Dark \% & Bright \% & Outliers & Changed mask pixels \\
+\midrule
+10thRamadanSouth\_g12 & 0.00 & 0.00 & 0.00 & 4 & 0 \\
+Damietta\_g20 & 0.00 & 2.29 & 0.00 & 0 & 0 \\
+SidiBarrani\_g21 & 0.33 & 0.33 & 0.00 & 0 & 0 \\
+Ismailia\_g03 & 0.00 & 0.00 & 0.00 & 1 & 2 \\
+10thRamadanSouth\_g21 & 0.00 & 0.00 & 0.00 & 0 & 0 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The dataset-level band means were computed over 561 images. Each band had 58,125,243 valid pixels. The means were:
+\begin{center}
+\begin{tabular}{rrrrrrrrrrrr}
+\toprule
+B1 & B2 & B3 & B4 & B5 & B6 & B7 & B8 & B9 & B10 & B11 & B12 \\
+\midrule
+1172.84 & 1393.63 & 1838.68 & 2207.12 & 2517.62 & 2779.52 & 2921.03 & 2974.80 & 2992.43 & 3018.56 & 3170.45 & 2739.66 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Duplicate detection compared 6,169 image pairs using a 95\% pixel-similarity threshold and found zero duplicate pairs.
+
+\section{Shared Preprocessing}
+
+Shared preprocessing lives mostly in \texttt{utils.py}. For image values:
+\begin{itemize}[noitemsep]
+  \item Read all Sentinel-2 bands as \texttt{float32}.
+  \item If image and mask dimensions differ in the training/evaluation notebook path, align them to the minimum shared height and width.
+  \item Build a NaN pixel mask.
+  \item Replace remaining NaNs with zero.
+  \item Clip spectral values to $[0, 10000]$.
+  \item Scale clipped values to $[0, 1]$.
+  \item Detect bright pixels by high mean brightness or too many saturated bands.
+  \item Compress bright pixels toward a target mean.
+\end{itemize}
+
+The main thresholds are:
+\begin{center}
+\begin{tabular}{lr}
+\toprule
+Setting & Value \\
+\midrule
+Dark mean threshold & 0.02 \\
+Dark max threshold & 0.06 \\
+Bright mean threshold & 0.85 \\
+Bright target mean & 0.75 \\
+Saturated band threshold & 0.98 \\
+Maximum saturated bands & 6 \\
+Maximum NaN pixel fraction & 0.90 \\
+Outlier window size & 3 \\
+Outlier mean difference threshold & 0.10 \\
+Outlier max difference threshold & 0.25 \\
+Outlier minimum band count & 4 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+For labels, small connected components are refined using:
+\begin{itemize}[noitemsep]
+  \item maximum component size: 128 pixels,
+  \item minimum neighboring pixels: 8,
+  \item iterations: 2,
+  \item 8-neighborhood connectivity,
+  \item target class: 0.
+\end{itemize}
+
+During training, invalid pixels are assigned label 0 and ignored by the DL loss. In the production \texttt{test.py} inference path, no mask is required and no crop or padding is applied. This preserves the exact input image geometry.
+
+\section{Classical Machine Learning Model}
+
+\subsection{Feature Engineering}
+
+The ML model is a pixel-wise XGBoost classifier. Each pixel is represented by 51 features. These include:
+\begin{itemize}[noitemsep]
+  \item Raw 12 Sentinel-2 bands.
+  \item Vegetation, water, built-up, and soil indices.
+  \item Brightness and visible-band statistics.
+  \item Band ratios and band differences.
+  \item Local mean and standard-deviation texture features.
+\end{itemize}
+
+The feature set includes NDVI, NDWI, MNDWI, NDBI, NDMI, NBR, GNDVI, BSI, SAVI, EVI, MSAVI, AWEI shadow, AWEI non-shadow, visible brightness, visible standard deviation, all-band mean/std, NIR/red ratio, NIR/green ratio, red/green ratio, blue/green ratio, SWIR ratio, SWIR1/red ratio, SWIR1/NIR ratio, red-blue difference, green-red difference, NIR-SWIR1 difference, and local statistics for NDVI, MNDWI, NDBI, NIR, and SWIR1.
+
+The highest correlation-ranked features in one run were:
+\begin{center}
+\begin{tabular}{lr}
+\toprule
+Feature & Correlation \\
+\midrule
+mndwi\_mean\_3 & 0.8512 \\
+mndwi & 0.8350 \\
+awei\_sh & 0.8202 \\
+B10 & 0.8098 \\
+ndvi\_mean\_5 & 0.8068 \\
+swir\_ratio & 0.8044 \\
+B9 & 0.8041 \\
+nir\_mean\_3 & 0.7977 \\
+ndvi\_mean\_3 & 0.7974 \\
+B7 & 0.7888 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Training Data}
+
+The full ML training matrix contains 45,989,211 labeled pixels and 51 features. To keep training tractable and reduce class imbalance, pixels are sampled per class:
+\begin{center}
+\begin{tabular}{lrr}
+\toprule
+Class & Available & Sampled \\
+\midrule
+Greenery & 8,257,084 & 550,000 \\
+Sand & 18,622,443 & 600,000 \\
+Water & 10,089,959 & 550,000 \\
+Cement & 9,019,725 & 650,000 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The final sampled training set contains 2,350,000 pixels.
+
+\subsection{Model Configuration}
+
+The classifier is an \texttt{XGBClassifier} with:
+\begin{center}
+\begin{tabular}{lr}
+\toprule
+Parameter & Value \\
+\midrule
+n\_estimators & 900 \\
+max\_depth & 10 \\
+learning\_rate & 0.05 \\
+subsample & 0.8 \\
+colsample\_bytree & 0.8 \\
+min\_child\_weight & 3 \\
+reg\_alpha & 0.1 \\
+reg\_lambda & 2.0 \\
+objective & multi:softprob \\
+num\_class & 4 \\
+eval\_metric & mlogloss \\
+tree\_method & hist \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Labels 1--4 are encoded to 0--3 for XGBoost and decoded back to project labels after prediction.
+
+\subsection{ML Results}
+
+\begin{center}
+\begin{tabular}{lrrrrrr}
+\toprule
+Split & Accuracy & mIoU & Greenery IoU & Sand IoU & Water IoU & Cement IoU \\
+\midrule
+Train & 0.9519 & 0.9135 & 0.9257 & 0.8819 & 0.9978 & 0.8485 \\
+Validation & 0.9003 & 0.8259 & 0.8514 & 0.8234 & 0.9200 & 0.7090 \\
+Test & 0.9227 & 0.8558 & 0.8854 & 0.8705 & 0.9665 & 0.7009 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+On the prepared qualitative test samples in \texttt{test\_samples.ipynb}, XGBoost reached overall mIoU 0.6453. Per-class IoU was:
+\begin{center}
+\begin{tabular}{lr}
+\toprule
+Class & IoU \\
+\midrule
+Greenery & 0.6334 \\
+Sand & 0.5588 \\
+Water & 0.8993 \\
+Cement & 0.4894 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{Deep Learning Model}
+
+\subsection{DL Dataset Construction}
+
+The DL notebook builds tensors with shape:
+\begin{verbatim}
+Train: (447, 12, 256, 256)
+Val:   (56, 12, 256, 256)
+Test:  (56, 12, 256, 256)
+\end{verbatim}
+
+The notebook training path crops or pads samples to 256 by 256. The production inference path in \texttt{test.py} does not do this. It predicts directly on the provided image dimensions and writes same-size TIFF masks.
+
+Non-zero class pixels in the DL tensors are:
+\begin{center}
+\begin{tabular}{lrrrr}
+\toprule
+Split & Greenery & Sand & Water & Cement \\
+\midrule
+Train & 5,340,937 & 11,617,563 & 6,469,453 & 5,663,681 \\
+Validation & 666,160 & 1,457,013 & 763,693 & 780,697 \\
+Test & 746,053 & 1,515,420 & 747,567 & 635,727 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+There were 202,958 ignored training pixels.
+
+\subsection{Architecture}
+
+The DL model is a U-Net from \texttt{segmentation-models-pytorch} with a ResNet-50 encoder and a custom \texttt{CementFeatureStem}. The stem computes index channels from the raw spectral tensor before passing features to the U-Net. The stem includes:
+\begin{itemize}[noitemsep]
+  \item raw spectral projection from 12 bands,
+  \item index projection from 8 engineered index channels,
+  \item local convolution branch,
+  \item dilation-2 convolution branch,
+  \item dilation-4 convolution branch,
+  \item fusion layer back to 12 channels,
+  \item squeeze-and-excitation attention,
+  \item residual addition to the original spectral tensor.
+\end{itemize}
+
+The engineered index channels used in the stem are NDBI, BSI, MNDWI, NDVI, brightness, visible standard deviation, SWIR1/red ratio, and SWIR1/NIR ratio.
+
+The model has approximately 32.74 million parameters. The U-Net predicts 5 classes, including the ignored unknown class 0.
+
+\subsection{Loss, Weights, and Optimization}
+
+The loss is cross entropy with ignored label 0. Class weights are computed by inverse class frequency with power 0.35, clipped between 0.80 and 1.20, and then the cement class is boosted by 1.5.
+
+\begin{center}
+\begin{tabular}{lr}
+\toprule
+Class & Loss weight \\
+\midrule
+Unknown & 0.0000 \\
+Greenery & 1.0879 \\
+Sand & 0.8289 \\
+Water & 1.0174 \\
+Cement & 1.5988 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Training uses AdamW with learning rate $10^{-4}$ and weight decay $10^{-4}$. The scheduler is \texttt{ReduceLROnPlateau}, maximizing validation score. The validation score is:
+\[
+0.7 \cdot \mathrm{mIoU} + 0.3 \cdot \mathrm{CementIoU}.
+\]
+
+Training was run for 100 epochs with early stopping patience 50. The best recorded score was at epoch 98:
+\begin{center}
+\begin{tabular}{lrrrrr}
+\toprule
+Epoch & Train loss & Val loss & Val mIoU & Cement IoU & Score \\
+\midrule
+98 & 0.1681 & 0.2060 & 0.8927 & 0.8374 & 0.8761 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The final epoch 100 had train loss 0.1729, validation loss 0.2136, validation mIoU 0.8902, cement IoU 0.8319, and score 0.8727.
+
+\subsection{DL Results}
+
+After loading \texttt{best\_unet.pth}, \texttt{train\_p2.ipynb} reports the following validation and internal test metrics:
+\begin{center}
+\begin{tabular}{lrrrrrr}
+\toprule
+Split & Loss & mIoU & Greenery IoU & Sand IoU & Water IoU & Cement IoU \\
+\midrule
+Validation & 0.2160 & 0.8923 & 0.9074 & 0.8990 & 0.9250 & 0.8379 \\
+Test & 0.1662 & 0.9142 & 0.9227 & 0.9346 & 0.9609 & 0.8384 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+On the prepared qualitative test samples in \texttt{test\_samples.ipynb}, the U-Net reached overall mIoU 0.6379. Per-class IoU was:
+\begin{center}
+\begin{tabular}{lr}
+\toprule
+Class & IoU \\
+\midrule
+Greenery & 0.6253 \\
+Sand & 0.5838 \\
+Water & 0.8978 \\
+Cement & 0.4446 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The current production-style TIFF predictions in \texttt{predictions/}, evaluated by \texttt{eval.py}, produce mIoU 0.6470 on the prepared test masks. This number belongs to the small prepared sample set, not the internal test split.
+
+\section{Prediction and Evaluation Scripts}
+
+\subsection{\texttt{test.py}}
+
+\texttt{test.py} is the production-style prediction entry point. It accepts an image directory, model type, optional model path, and output directory:
+\begin{verbatim}
+python test.py --imgs-dir data/test/samples_prepared/imgs \
+               --model-type dl \
+               --output-dir predictions
+\end{verbatim}
+
+It writes one TIFF per image:
+\begin{verbatim}
+predictions/<sample>_Spectral_prediction.tif
+\end{verbatim}
+
+Each output is a single-band \texttt{uint8} raster with the same spatial shape as the input image. The raster profile is copied from the input image and updated to one output band. This is the format expected by the mentor: integer class labels placed at their pixel locations, like the provided masks.
+
+\subsection{\texttt{test.sh}}
+
+\texttt{test.sh} chooses the project virtual environment if available and defaults to:
+\begin{verbatim}
+data/test/samples_prepared/imgs
+\end{verbatim}
+
+It can be run as:
+\begin{verbatim}
+./test.sh
+\end{verbatim}
+
+or with overrides:
+\begin{verbatim}
+./test.sh --imgs-dir /path/to/imgs --model-type ml --output-dir predictions_ml
+\end{verbatim}
+
+\subsection{\texttt{eval.py}}
+
+\texttt{eval.py} reads prediction TIFFs and ground-truth mask TIFFs, matches them by sample prefix, ignores ground-truth label 0, and prints only mIoU:
+\begin{verbatim}
+python eval.py --predictions predictions \
+               --masks-dir data/test/samples_prepared/masks
+\end{verbatim}
+
+\section{Comparison and Observations}
+
+The full split metrics show strong performance for both tracks. On the internal test split, XGBoost reaches mIoU 0.8558 and the U-Net reaches mIoU 0.9142 after loading \texttt{best\_unet.pth}. On the small prepared qualitative test set, ML and DL are close: XGBoost mIoU is 0.6453 in the notebook, and the DL production TIFF predictions evaluate at 0.6470. Both models perform best on water and struggle more on cement. Cement remains the hardest class because it is visually heterogeneous and can be confused with sand or bright urban/bare surfaces.
+
+The DL model was explicitly optimized for cement through the custom index stem, cement class-weight boost, and validation score that includes cement IoU. The ML model benefits from a rich spectral feature set and strong tree-based decision boundaries, especially for water and sand separation.
+
+\section{Limitations and Next Steps}
+
+\begin{itemize}
+  \item The prepared external test set is small, so its mIoU is useful for sanity checking but not a complete benchmark.
+  \item The notebook DL training path uses fixed 256 by 256 tensors, while production inference runs full input dimensions. This is acceptable for fully convolutional U-Net inference, but should be monitored for edge cases where model libraries impose size constraints.
+  \item Cement remains the main weakness. More labeled cement examples and hard-negative sampling from sand/urban boundaries would likely help.
+  \item The mask refinement currently targets unknown class components. Additional cleanup rules should be evaluated carefully because they can change labels.
+  \item Future reports should include visual figures from the prediction outputs once a stable final test set is chosen.
+\end{itemize}
+
+\end{document}
