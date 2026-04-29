@@ -306,14 +306,6 @@ def preprocess_img(img_path, mask_path, train=False, ml='dl'):
     with rasterio.open(mask_path) as src:
         mask = src.read(1)
 
-    img_h, img_w = img.shape[1], img.shape[2]
-    mask_h, mask_w = mask.shape[0], mask.shape[1]
-    if (img_h != mask_h) or (img_w != mask_w):
-        h = min(img_h, mask_h)
-        w = min(img_w, mask_w)
-        img = img[:, :h, :w]
-        mask = mask[:h, :w]
-
     nan_pixel_mask = build_nan_pixel_mask(img)
     img = np.nan_to_num(img, nan=0.0)
     zero_pixel_mask = np.all(img == 0, axis=0)
