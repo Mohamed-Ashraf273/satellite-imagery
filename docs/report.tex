@@ -190,7 +190,7 @@ The ML model is a pixel-wise XGBoost classifier. Each pixel is represented by 51
   \item Local mean and standard-deviation texture features.
 \end{itemize}
 
-The feature set includes NDVI, NDWI, MNDWI, NDBI, NDMI, NBR, GNDVI, BSI, SAVI, EVI, MSAVI, AWEI shadow, AWEI non-shadow, visible brightness, visible standard deviation, all-band mean/std, NIR/red ratio, NIR/green ratio, red/green ratio, blue/green ratio, SWIR ratio, SWIR1/red ratio, SWIR1/NIR ratio, red-blue difference, green-red difference, NIR-SWIR1 difference, and local statistics for NDVI, MNDWI, NDBI, NIR, and SWIR1.
+The feature set includes NDVI, NDWI, MNDWI, NDBI, NDMI, NBR, GNDVI, BSI, SAVI, EVI, MSAVI, AWEI shadow, AWEI non-shadow, visible brightness, visible standard deviation, all-band mean/std, NIR/red ratio, NIR/green ratio, red/green ratio, blue/green ratio, SWIR ratio, SWIR1/red ratio, SWIR1/NIR ratio, red-blue difference, green-red difference, NIR-SWIR1 difference, and local statistics for NDVI, MNDWI, NDBI, NIR, and SWIR1. The standard spectral-index equations are based on common remote-sensing indices, including NDWI, MNDWI, NDBI, SAVI, MSAVI, AWEI, BSI, NBR, and GNDVI. Raw-band values, simple ratios, differences, brightness, and local mean/std features are additional engineered features for the XGBoost classifier.
 
 The highest correlation-ranked features in one run were:
 \begin{center}
@@ -453,6 +453,20 @@ The DL model was explicitly optimized for cement through the custom index stem, 
   \item Cement remains the main weakness. More labeled cement examples and hard-negative sampling from sand/urban boundaries would likely help.
   \item The mask refinement currently targets unknown class components. Additional cleanup rules should be evaluated carefully because they can change labels.
   \item Future reports should include visual figures from the prediction outputs once a stable final test set is chosen.
+\end{itemize}
+
+\section{References}
+
+\begin{itemize}
+  \item McFeeters, S. K. (1996). The Use of the Normalized Difference Water Index (NDWI) in the Delineation of Open Water Features. \textit{International Journal of Remote Sensing}, 17, 1425--1432. \href{https://doi.org/10.1080/01431169608948714}{DOI: \texttt{10.1080/01431169608948714}}.
+  \item Xu, H. (2006). Modification of Normalised Difference Water Index (MNDWI) to Enhance Open Water Features in Remotely Sensed Imagery. \textit{International Journal of Remote Sensing}, 27, 3025--3033. \href{https://doi.org/10.1080/01431160600589179}{DOI: \texttt{10.1080/01431160600589179}}.
+  \item Zha, Y., Gao, J., and Ni, S. (2003). Use of Normalized Difference Built-Up Index in Automatically Mapping Urban Areas from TM Imagery. \textit{International Journal of Remote Sensing}, 24, 583--594. \href{https://doi.org/10.1080/01431160304987}{DOI: \texttt{10.1080/01431160304987}}.
+  \item Huete, A. R. (1988). A Soil-Adjusted Vegetation Index (SAVI). \textit{Remote Sensing of Environment}, 25, 295--309. \href{https://doi.org/10.1016/0034-4257(88)90106-X}{DOI: \texttt{10.1016/0034-4257(88)90106-X}}.
+  \item Qi, J., Chehbouni, A., Huete, A. R., Kerr, Y. H., and Sorooshian, S. (1994). A Modified Soil Adjusted Vegetation Index (MSAVI). \textit{Remote Sensing of Environment}, 48, 119--126. \href{https://doi.org/10.1016/0034-4257(94)90134-1}{DOI: \texttt{10.1016/0034-4257(94)90134-1}}.
+  \item Feyisa, G. L., Meilby, H., Fensholt, R., and Proud, S. R. (2014). Automated Water Extraction Index: A New Technique for Surface Water Mapping Using Landsat Imagery. \textit{Remote Sensing of Environment}, 140, 23--35. \href{https://doi.org/10.1016/j.rse.2013.08.029}{DOI: \texttt{10.1016/j.rse.2013.08.029}}.
+  \item Chen, W., Liu, L., Zhang, C., Wang, J., Wang, J., and Pan, Y. (2004). Monitoring the Seasonal Bare Soil Areas in Beijing Using Multi-Temporal TM Images. \textit{IEEE International Geoscience and Remote Sensing Symposium}, 5, 3379--3382. \href{https://ieeexplore.ieee.org/document/1370469}{IEEE link}.
+  \item Key, C. H., and Benson, N. C. (2006). Remote Sensing Measure of Severity: The Normalized Burn Ratio. In \textit{FIREMON: Fire Effects Monitoring and Inventory System}, USDA Forest Service, Rocky Mountain Research Station. \href{https://www.fs.usda.gov/rm/pubs/rmrs_gtr164/rmrs_gtr164_13_land_assess.pdf}{PDF link}.
+  \item Gitelson, A. A., Kaufman, Y. J., and Merzlyak, M. N. (1996). Use of a Green Channel in Remote Sensing of Global Vegetation from EOS-MODIS. \textit{Remote Sensing of Environment}, 58, 289--298. \href{https://doi.org/10.1016/S0034-4257(96)00072-7}{DOI: \texttt{10.1016/S0034-4257(96)00072-7}}.
 \end{itemize}
 
 \end{document}
