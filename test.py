@@ -132,6 +132,11 @@ def preprocess_image(img_path):
     return img.astype(np.float32)
 
 
+def read_profile(img_path):
+    with rasterio.open(img_path) as src:
+        return src.profile.copy()
+
+
 def load_model(model_type, model_path):
     if model_type == "ml":
         with open(model_path, "rb") as f:
@@ -162,22 +167,26 @@ def predict_dl(model, img):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--imgs-dir", default="/home/mohamed-ashraf/Desktop/projects/sat-project/data/samples/imgs")
-    parser.add_argument("--masks-dir", default="/home/mohamed-ashraf/Desktop/projects/sat-project/data/samples/masks")
     parser.add_argument("--model-type", choices=["ml", "dl"], default="dl")
     parser.add_argument("--model-path", default=None)
-    parser.add_argument("--output", default="predictions.txt")
+    parser.add_argument("--output-dir", default="predictions")
     args = parser.parse_args()
 
     model_path = args.model_path or ("model.pkl" if args.model_type == "ml" else "best_unet.pth")
     model = load_model(args.model_type, model_path)
     paths = image_paths(args.imgs_dir)
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-    with open(args.output, "w") as f:
-        for img_path in paths:
-            img = preprocess_image(img_path)
-            pred = predict_ml(model, img) if args.model_type == "ml" else predict_dl(model, img)
-            for value in pred.reshape(-1):
-                f.write(f"{int(value)}\n")
+    for img_path in paths:
+        img = preprocess_image(img_path)
+        pred = predict_ml(model, img) if args.model_type == "ml" else predict_dl(model, img)
+        pred = pred.reshape(img.shape[1], img.shape[2]).astype(np.uint8)
+        profile = read_profile(img_path)
+        profile.update(count=1, dtype=rasterio.uint8, nodata=0)
+        output_path = output_dir / f"{img_path.stem}_prediction.tif"
+        with rasterio.open(output_path, "w", **profile) as dst:
+            dst.write(pred, 1)
 
 
 if __name__ == "__main__":
