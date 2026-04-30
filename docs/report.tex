@@ -55,7 +55,13 @@ The main saved artifacts are \texttt{model.pkl} for the ML model and \texttt{bes
 
 \section{Data Source and Generation}
 
-The dataset is built from Google Earth Engine exports. The notebook \texttt{generate\_samples\_gee.ipynb} exports Sentinel-2 spectral tiles and Dynamic World label masks. A later export batch focuses on Cairo University, Siwa Oasis, Downtown Cairo, Heliopolis, Maadi, and New Cairo. A grid expansion is used around each base point, with a 4 by 4 grid and 2000 meter spacing, creating 96 export locations for that batch.
+The dataset is built from Google Earth Engine exports. The notebook \texttt{generate\_samples\_gee.ipynb} exports Sentinel-2 spectral tiles from \texttt{COPERNICUS/S2\_SR\_HARMONIZED} and Dynamic World label masks. The Sentinel-2 band descriptions are taken from the Earth Engine Data Catalog page for this collection: \href{https://developers.google.com/earth-engine/datasets/catalog/COPERNICUS_S2_SR_HARMONIZED}{\texttt{COPERNICUS/S2\_SR\_HARMONIZED}}. A later export batch focuses on Cairo University, Siwa Oasis, Downtown Cairo, Heliopolis, Maadi, and New Cairo. A grid expansion is used around each base point, with a 4 by 4 grid and 2000 meter spacing, creating 96 export locations for that batch.
+
+The exported spectral channels are selected in this order:
+\begin{verbatim}
+B1, B2, B3, B4, B5, B6, B7, B8, B8A, B9, B11, B12
+\end{verbatim}
+Therefore array channel indices in Python are zero-based positions in this exported list: channel 1 is Sentinel-2 B2 (blue), channel 2 is B3 (green), channel 3 is B4 (red), channel 7 is B8 (NIR), channel 10 is B11 (SWIR 1), and channel 11 is B12 (SWIR 2).
 
 The exported files are organized as:
 \begin{verbatim}
@@ -122,7 +128,7 @@ The dataset-level band means were computed over 561 images. Each band had 58,125
 \begin{center}
 \begin{tabular}{rrrrrrrrrrrr}
 \toprule
-B1 & B2 & B3 & B4 & B5 & B6 & B7 & B8 & B9 & B10 & B11 & B12 \\
+B1 & B2 & B3 & B4 & B5 & B6 & B7 & B8 & B8A & B9 & B11 & B12 \\
 \midrule
 1172.84 & 1393.63 & 1838.68 & 2207.12 & 2517.62 & 2779.52 & 2921.03 & 2974.80 & 2992.43 & 3018.56 & 3170.45 & 2739.66 \\
 \bottomrule
